@@ -10,7 +10,6 @@ let bpmBounds = [60, 200];
 f.fuzzy = [];
 f.shape = null;
 f.sim = null;                         // { path, name, bands, shape, dur } while ranking by "similar to this sample"
-let multi = new Set(), anchor = -1;  // multi-selection (ctrl/shift click) for dragging several samples at once
 let sort = { col: 'pack', dir: 1 };
 const SORTS = [['name', 'Name'], ['pack', 'Pack'], ['type', 'Type'], ['bpm', 'BPM'], ['key', 'Key'], ['dur', 'Length']];
 let favs = new Set();
@@ -94,7 +93,7 @@ function refresh(keepScroll) {
   $('#rows').style.height = VIEW.length * ROW + 'px';
   if (!keepScroll) $('#list').scrollTop = 0;
   renderRows();
-  $('#count').textContent = `${VIEW.length.toLocaleString()} ${f.shape || f.sim ? 'closest ' : ''}sample${VIEW.length === 1 ? '' : 's'}${selCount() > 1 ? ' · ' + selCount() + ' selected' : ''}`;
+  $('#count').textContent = `${VIEW.length.toLocaleString()} ${f.shape || f.sim ? 'closest ' : ''}sample${VIEW.length === 1 ? '' : 's'}`;
   $('#sortLabel').textContent = sort.col === 'match' ? 'Best match' : SORTS.find((s) => s[0] === sort.col)[1] + (sort.dir > 0 ? ' ↑' : ' ↓');
   $('#btnShape').classList.toggle('lit', !!f.shape);
   if (popFor === $('#btnShape')) drawSketch();
@@ -499,7 +498,7 @@ function renderRows() {
   for (let i = start; i < end; i++) {
     const it = VIEW[i];
     const fav = favs.has(it.path);
-    html += `<div class="trow ${it.path === selPath ? 'sel' : ''} ${multi.has(it.path) ? 'msel' : ''}" data-i="${i}" draggable="true" style="top:${i * ROW}px">
+    html += `<div class="trow ${it.path === selPath ? 'sel' : ''}" data-i="${i}" draggable="true" style="top:${i * ROW}px">
       <div class="star ${fav ? 'on' : ''}" data-star><svg viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2 6.3 20.3l1.2-6.4L2.8 9.5l6.4-.8z" stroke-linejoin="round"/></svg></div>
       <div title="${esc(it.rel)}"><div class="nm">${esc(it.name)}${it.loop ? '<span class="lp">LOOP</span>' : ''}</div><div class="sub">${esc(prettyPack(it.pack))} · ${esc(it.type)}</div></div>
       <div class="c-bpm">${it.bpm ? it.bpm + ' bpm' : ''}</div>
@@ -545,11 +544,6 @@ function ensureVisible(i) {
   if (y < list.scrollTop) list.scrollTop = y;
   else if (y + ROW > list.scrollTop + list.clientHeight) list.scrollTop = y + ROW - list.clientHeight;
 }
-const selCount = () => { let n = 0; for (const v of VIEW) if (multi.has(v.path)) n++; return n; };
-const updateCount = () => {
-  const n = selCount();
-  $('#count').textContent = `${VIEW.length.toLocaleString()} ${f.shape || f.sim ? 'closest ' : ''}sample${VIEW.length === 1 ? '' : 's'}${n > 1 ? ' · ' + n + ' selected' : ''}`;
-};
 const rowIndexOf = (path) => VIEW.findIndex((v) => v.path === path);
 
 // ---------- audio engine ----------
@@ -710,20 +704,7 @@ $('#rows').addEventListener('click', (e) => {
     saveFavs(); if (f.fav) refresh(true); else { renderRows(); renderSide(); }
     return;
   }
-  const i = +row.dataset.i;
-  if (e.shiftKey) {
-    const a = anchor >= 0 && anchor < VIEW.length ? anchor : Math.max(0, rowIndexOf(selPath));
-    multi = new Set(VIEW.slice(Math.min(a, i), Math.max(a, i) + 1).map((v) => v.path));
-    renderRows(); updateCount(); return;
-  }
-  if (e.ctrlKey || e.metaKey) {
-    if (!multi.size && selPath) multi.add(selPath);
-    multi.has(it.path) ? multi.delete(it.path) : multi.add(it.path);
-    anchor = i; renderRows(); updateCount(); return;
-  }
-  if (multi.size) { multi.clear(); updateCount(); }
-  anchor = i;
-  select(i);
+  select(+row.dataset.i);
 });
 $('#rows').addEventListener('dblclick', (e) => {
   const row = e.target.closest('.trow'); if (!row || e.target.closest('[data-star]')) return;
@@ -735,10 +716,7 @@ $('#rows').addEventListener('contextmenu', (e) => {
 });
 $('#rows').addEventListener('dragstart', (e) => {
   const row = e.target.closest('.trow'); if (!row) return;
-  e.preventDefault();
-  const it = VIEW[+row.dataset.i];
-  const group = multi.size > 1 && multi.has(it.path) ? VIEW.filter((v) => multi.has(v.path)).map((v) => v.path) : [it.path];
-  api.dragStart(group);
+  e.preventDefault(); api.dragStart([VIEW[+row.dataset.i].path]);
 });
 
 $('#packs').addEventListener('click', (e) => {
@@ -779,7 +757,6 @@ document.addEventListener('keydown', (e) => {
   const inField = e.target.matches('#q');
   if (e.key === 'Escape') {
     if (popFor) closePop();
-    else if (multi.size) { multi.clear(); renderRows(); updateCount(); }
     else if (inField && $('#q').value) $('#qClear').click();
     else document.activeElement.blur();
   }
@@ -790,7 +767,6 @@ document.addEventListener('keydown', (e) => {
   else if ((e.key === '/' && !inField) || (e.ctrlKey && e.key.toLowerCase() === 'f')) { e.preventDefault(); $('#q').focus(); $('#q').select(); }
   else if (e.key === 'Enter' && inField) { $('#q').blur(); if (selPath == null && VIEW.length) select(0); }
   else if (e.key === ' ' && !inField) { e.preventDefault(); toggle(); }
-  else if (e.ctrlKey && e.key.toLowerCase() === 'a' && !inField) { e.preventDefault(); multi = new Set(VIEW.map((v) => v.path)); renderRows(); updateCount(); }
   else if (e.key.toLowerCase() === 's' && !inField && !e.ctrlKey && cur) startSimilar(cur);
   else if (e.key.toLowerCase() === 'f' && !inField && !e.ctrlKey && cur) {
     favs.has(cur.path) ? favs.delete(cur.path) : favs.add(cur.path);

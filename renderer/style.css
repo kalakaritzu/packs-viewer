@@ -71,7 +71,6 @@ input { font: inherit; color: inherit; }
 .trow:hover { background: var(--panel); }
 .trow.sel { background: var(--panel2); }
 .trow.sel .nm { color: var(--accent); }
-.trow.msel { background: var(--accent-soft); }
 .btn.upd { height: 30px; padding: 0 12px; margin-right: 6px; background: var(--accent); color: #fff; }
 .btn.upd[hidden] { display: none; }
 .trow > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

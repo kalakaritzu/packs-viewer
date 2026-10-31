@@ -25,7 +25,7 @@ Section
   CreateShortcut "$SMPROGRAMS\${NAME}.lnk" "$INSTDIR\${NAME}.exe" "" "$INSTDIR\icon.ico" 0
   WriteRegStr HKCU "${UNKEY}" "DisplayName" "${NAME}"
   WriteRegStr HKCU "${UNKEY}" "DisplayIcon" "$INSTDIR\icon.ico"
-  WriteRegStr HKCU "${UNKEY}" "DisplayVersion" "1.1.0"
+  WriteRegStr HKCU "${UNKEY}" "DisplayVersion" "1.1.1"
   WriteRegStr HKCU "${UNKEY}" "Publisher" "${NAME}"
   WriteRegStr HKCU "${UNKEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNKEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
