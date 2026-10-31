@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost;">
+<title>Packs Viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <nav id="nav">
+    <div class="logo"><svg viewBox="0 0 256 256" width="100%" height="100%" fill="#fff" aria-hidden="true"><rect x="22" y="105.8" width="20" height="44.5" rx="4"/><rect x="54" y="87.2" width="20" height="81.7" rx="4"/><rect x="86" y="64.9" width="20" height="126.2" rx="4"/><rect x="118" y="90.8" width="20" height="74.3" rx="4"/><rect x="150" y="57.5" width="20" height="141.1" rx="4"/><rect x="182" y="79.8" width="20" height="96.5" rx="4"/><rect x="214" y="102.0" width="20" height="52.0" rx="4"/></svg></div>
+    <button class="tab" id="navAll">All samples<em id="cntAll"></em></button>
+    <button class="tab" id="navFav">Favorites<em id="cntFav"></em></button>
+    <div class="grow"></div>
+    <button class="icon-btn" id="btnPin" title="Keep on top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6z"/><path d="M12 13v7"/></svg></button>
+    <button class="icon-btn" id="btnMenu" title="Library options"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+    <button class="icon-btn" id="btnMin" title="Minimize"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="2" rx="1"/></svg></button>
+    <button class="icon-btn close" id="btnClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+  </nav>
+
+  <aside id="side">
+    <div class="sec-title">Packs</div>
+    <div id="packs"></div>
+  </aside>
+
+  <main id="main">
+    <header id="top">
+      <div class="search">
+        <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="q" type="text" placeholder="Search samples" spellcheck="false" autocomplete="off">
+        <button id="qClear" class="x" title="Clear" hidden>×</button>
+      </div>
+      <button class="btn" id="btnShape" title="Search by shape: sketch a volume curve and find samples that look like it" hidden><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 18c4 0 4-12 9-12s4 12 9 12"/></svg>Sketch</button>
+      <button class="btn" id="btnSort">Sort<span id="sortLabel"></span></button>
+      <button class="btn white" id="btnFilters">Filters<span class="badge" id="fBadge" hidden></span></button>
+    </header>
+
+    <div id="chips"><span id="count"></span><span id="tags"></span></div>
+
+    <div id="list"><div id="rows"></div><div id="empty" hidden>No samples match.</div></div>
+
+    <footer id="player">
+      <button id="btnPlay" class="play" title="Play / pause (Space)"><svg id="icoPlay" viewBox="0 0 24 24" width="20" height="20"><path d="M8 5l12 7-12 7z" fill="currentColor"/></svg><svg id="icoStop" viewBox="0 0 24 24" width="20" height="20" hidden><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/></svg></button>
+      <div id="wave"><canvas id="cv"></canvas><div id="waveMsg"></div></div>
+      <div id="time">0:00.00</div>
+      <button class="icon-btn tgl" id="optLoop" title="Loop"><svg viewBox="0 0 24 24"><path d="M17 2l4 4-4 4M3 11V9a3 3 0 013-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 01-3 3H3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="icon-btn tgl on" id="optAuto" title="Auto-play on select"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
+      <button class="icon-btn" id="btnVol" title="Volume"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 010 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+      <button class="icon-btn" id="btnReveal" title="Show in Explorer"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 012-2h4l2 2h8a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
+    </footer>
+  </main>
+</div>
+
+<div id="pop" hidden></div>
+<div id="loading"><div class="box"><div class="spin"></div><div id="loadMsg">Scanning packs…</div><div class="bar"><i id="loadBar"></i></div></div></div>
+<div id="toast"></div>
+<script src="tauri-api.js"></script>
+<script src="renderer.js"></script>
+</body>
+</html>
