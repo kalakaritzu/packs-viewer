@@ -329,7 +329,32 @@ fn scan_root(app: &AppHandle, root: &Path, force: bool) -> Vec<Item> {
 // ---------- shapes (volume-over-time outline per WAV, for "search by shape") ----------
 const SHAPE_N: usize = 48;
 
-fn wav_shape(p: &Path) -> Option<Vec<u8>> {
+struct Wav {
+    b: Vec<u8>,
+    start: usize,
+    tag: usize,
+    bits: usize,
+    ch: usize,
+    align: usize,
+    frames: usize,
+    sr: f32,
+}
+
+impl Wav {
+    fn sample(&self, fr: usize, c: usize) -> f32 {
+        let b = &self.b;
+        let q = self.start + fr * self.align + c * (self.bits / 8);
+        match (self.tag, self.bits) {
+            (1, 8) => (b[q] as f32 - 128.0) / 128.0,
+            (1, 16) => i16::from_le_bytes([b[q], b[q + 1]]) as f32 / 32768.0,
+            (1, 24) => (((b[q] as i32) << 8 | (b[q + 1] as i32) << 16 | (b[q + 2] as i32) << 24) >> 8) as f32 / 8388608.0,
+            (1, _) => i32::from_le_bytes([b[q], b[q + 1], b[q + 2], b[q + 3]]) as f32 / 2147483648.0,
+            _ => f32::from_le_bytes([b[q], b[q + 1], b[q + 2], b[q + 3]]),
+        }
+    }
+}
+
+fn read_wav(p: &Path) -> Option<Wav> {
     let md = fs::metadata(p).ok()?;
     if md.len() > 96_000_000 {
         return None;
@@ -340,7 +365,7 @@ fn wav_shape(p: &Path) -> Option<Vec<u8>> {
     }
     let u16le = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]) as usize;
     let u32le = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]) as usize;
-    let (mut tag, mut ch, mut bits, mut align) = (0usize, 0usize, 0usize, 0usize);
+    let (mut tag, mut ch, mut bits, mut align, mut sr) = (0usize, 0usize, 0usize, 0usize, 0usize);
     let mut data: Option<(usize, usize)> = None;
     let mut o = 12usize;
     while o + 8 <= b.len() {
@@ -350,6 +375,7 @@ fn wav_shape(p: &Path) -> Option<Vec<u8>> {
         if id == b"fmt " && body + 16 <= b.len() {
             tag = u16le(body);
             ch = u16le(body + 2);
+            sr = u32le(body + 4);
             align = u16le(body + 12);
             bits = u16le(body + 14);
             if tag == 0xFFFE && body + 26 <= b.len() {
@@ -363,7 +389,7 @@ fn wav_shape(p: &Path) -> Option<Vec<u8>> {
         o = body + sz + (sz & 1);
     }
     let (start, len) = data?;
-    if ch == 0 || align == 0 || bits == 0 || !(tag == 1 || tag == 3) {
+    if ch == 0 || align == 0 || bits == 0 || sr == 0 || !(tag == 1 || tag == 3) {
         return None;
     }
     let bps = bits / 8;
@@ -374,16 +400,12 @@ fn wav_shape(p: &Path) -> Option<Vec<u8>> {
     if frames == 0 {
         return None;
     }
-    let sample = |fr: usize, c: usize| -> f32 {
-        let q = start + fr * align + c * bps;
-        match (tag, bits) {
-            (1, 8) => (b[q] as f32 - 128.0) / 128.0,
-            (1, 16) => i16::from_le_bytes([b[q], b[q + 1]]) as f32 / 32768.0,
-            (1, 24) => (((b[q] as i32) << 8 | (b[q + 1] as i32) << 16 | (b[q + 2] as i32) << 24) >> 8) as f32 / 8388608.0,
-            (1, _) => i32::from_le_bytes([b[q], b[q + 1], b[q + 2], b[q + 3]]) as f32 / 2147483648.0,
-            _ => f32::from_le_bytes([b[q], b[q + 1], b[q + 2], b[q + 3]]),
-        }
-    };
+    Some(Wav { b, start, tag, bits, ch, align, frames, sr: sr as f32 })
+}
+
+fn wav_shape(p: &Path) -> Option<Vec<u8>> {
+    let w = read_wav(p)?;
+    let (frames, ch) = (w.frames, w.ch);
     let mut env = [0f32; SHAPE_N];
     for (i, e) in env.iter_mut().enumerate() {
         let a = i * frames / SHAPE_N;
@@ -393,7 +415,7 @@ fn wav_shape(p: &Path) -> Option<Vec<u8>> {
         let mut fr = a;
         while fr < z {
             for c in 0..ch {
-                let v = sample(fr, c).abs();
+                let v = w.sample(fr, c).abs();
                 if v > m {
                     m = v;
                 }
@@ -407,6 +429,87 @@ fn wav_shape(p: &Path) -> Option<Vec<u8>> {
         return None;
     }
     Some(env.iter().map(|v| ((v / top).min(1.0) * 255.0).round() as u8).collect())
+}
+
+// ---------- sound (average spectrum in log-spaced bands, for "find similar") ----------
+const FFT_N: usize = 2048;
+const BANDS: usize = 16;
+const SOUND_FRAMES: usize = 24;
+
+fn fft(re: &mut [f32], im: &mut [f32]) {
+    let n = re.len();
+    let mut j = 0;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j ^= bit;
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+    let mut len = 2;
+    while len <= n {
+        let ang = -2.0 * std::f32::consts::PI / len as f32;
+        let (wr, wi) = (ang.cos(), ang.sin());
+        for s in (0..n).step_by(len) {
+            let (mut cr, mut ci) = (1f32, 0f32);
+            for k in 0..len / 2 {
+                let (a, b) = (s + k, s + k + len / 2);
+                let (tr, ti) = (re[b] * cr - im[b] * ci, re[b] * ci + im[b] * cr);
+                re[b] = re[a] - tr;
+                im[b] = im[a] - ti;
+                re[a] += tr;
+                im[a] += ti;
+                let nr = cr * wr - ci * wi;
+                ci = cr * wi + ci * wr;
+                cr = nr;
+            }
+        }
+        len <<= 1;
+    }
+}
+
+fn wav_sound(p: &Path) -> Option<Vec<u8>> {
+    let w = read_wav(p)?;
+    let nyq = w.sr / 2.0;
+    let hi = (18000f32).min(nyq * 0.95);
+    let lo = 60f32;
+    if hi <= lo * 2.0 {
+        return None;
+    }
+    let bin_hz = w.sr / FFT_N as f32;
+    let edge = |i: usize| lo * (hi / lo).powf(i as f32 / BANDS as f32);
+    let win: Vec<f32> = (0..FFT_N).map(|i| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / (FFT_N - 1) as f32).cos()).collect();
+    let mut acc = [0f64; BANDS];
+    let (mut re, mut im) = (vec![0f32; FFT_N], vec![0f32; FFT_N]);
+    for k in 0..SOUND_FRAMES {
+        let start = if w.frames > FFT_N { k * (w.frames - FFT_N) / (SOUND_FRAMES - 1) } else { 0 };
+        for i in 0..FFT_N {
+            let fr = start + i;
+            re[i] = if fr < w.frames { (0..w.ch).map(|c| w.sample(fr, c)).sum::<f32>() / w.ch as f32 * win[i] } else { 0.0 };
+            im[i] = 0.0;
+        }
+        fft(&mut re, &mut im);
+        for band in 0..BANDS {
+            let (a, z) = ((edge(band) / bin_hz).round() as usize, (edge(band + 1) / bin_hz).round() as usize);
+            let (a, z) = (a.max(1).min(FFT_N / 2 - 1), z.max(a + 1).min(FFT_N / 2));
+            let mut sum = 0f64;
+            for bin in a..z {
+                sum += (re[bin] * re[bin] + im[bin] * im[bin]) as f64;
+            }
+            acc[band] += sum / (z - a) as f64;
+        }
+    }
+    let db: Vec<f64> = acc.iter().map(|v| 10.0 * (v / SOUND_FRAMES as f64 + 1e-12).log10()).collect();
+    let top = db.iter().cloned().fold(f64::MIN, f64::max);
+    if top < -90.0 {
+        return None;
+    }
+    Some(db.iter().map(|d| (((d - top + 70.0) / 70.0).clamp(0.0, 1.0) * 255.0).round() as u8).collect())
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -458,6 +561,49 @@ async fn shapes(app: AppHandle) -> Result<HashMap<String, Vec<u8>>, String> {
     .map_err(|e| e.to_string())
 }
 
+fn cached_index(app: &AppHandle, file: &str, make: fn(&Path) -> Option<Vec<u8>>, progress: &str) -> HashMap<String, Vec<u8>> {
+    let root = get_root_path(app);
+    let cache_path = data_dir(app).join(file);
+    let cache: HashMap<String, ShapeEntry> = fs::read_to_string(&cache_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let files: Vec<PathBuf> = walkdir::WalkDir::new(&root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file() && e.path().extension().and_then(|x| x.to_str()).map_or(false, |x| x.eq_ignore_ascii_case("wav")))
+        .map(|e| e.into_path())
+        .collect();
+    let total = files.len();
+    let done = AtomicUsize::new(0);
+    let out: Vec<(String, ShapeEntry)> = files
+        .par_iter()
+        .filter_map(|p| {
+            let md = fs::metadata(p).ok()?;
+            let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+            let key = p.to_string_lossy().to_string();
+            let entry = match cache.get(&key) {
+                Some(c) if c.m == mtime && c.s == md.len() => c.clone(),
+                _ => ShapeEntry { m: mtime, s: md.len(), v: make(p).unwrap_or_default() },
+            };
+            let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+            if d % 32 == 0 || d == total {
+                let _ = app.emit(progress, json!({ "done": d, "total": total }));
+            }
+            Some((key, entry))
+        })
+        .collect();
+    let new_cache: HashMap<String, ShapeEntry> = out.into_iter().collect();
+    if let Ok(s) = serde_json::to_string(&new_cache) {
+        let _ = fs::write(cache_path, s);
+    }
+    new_cache.into_iter().filter(|(_, e)| !e.v.is_empty()).map(|(k, e)| (k, e.v)).collect()
+}
+
+#[tauri::command]
+async fn sounds(app: AppHandle) -> Result<HashMap<String, Vec<u8>>, String> {
+    tauri::async_runtime::spawn_blocking(move || cached_index(&app, "sound-cache.json", wav_sound, "sound-progress"))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ---------- commands ----------
 #[tauri::command]
 fn get_root(app: AppHandle) -> String {
@@ -495,15 +641,48 @@ async fn read_file(path: String) -> Result<tauri::ipc::Response, String> {
 }
 
 #[tauri::command]
-fn drag_start(window: WebviewWindow, path: String) -> Result<(), String> {
+fn drag_start(window: WebviewWindow, paths: Vec<String>) -> Result<(), String> {
     drag::start_drag(
         &window,
-        drag::DragItem::Files(vec![PathBuf::from(path)]),
+        drag::DragItem::Files(paths.into_iter().map(PathBuf::from).collect()),
         drag::Image::Raw(DRAG_ICON.to_vec()),
         |_result, _pos| {},
         drag::Options::default(),
     )
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+// Downloads the release installer with the curl that ships with Windows and runs it (it closes and relaunches the app).
+#[tauri::command]
+async fn install_update(url: String) -> Result<(), String> {
+    if !url.starts_with("https://github.com/kalakaritzu/packs-viewer/releases/download/") {
+        return Err("unexpected update url".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::os::windows::process::CommandExt;
+        let out = std::env::temp_dir().join("Packs-Viewer-Setup.exe");
+        let _ = fs::remove_file(&out);
+        let ok = std::process::Command::new("curl.exe")
+            .args(["-L", "-f", "-s", "-o"])
+            .arg(&out)
+            .arg(&url)
+            .creation_flags(0x0800_0000)
+            .status()
+            .map_err(|e| e.to_string())?
+            .success();
+        if !ok || fs::metadata(&out).map(|m| m.len()).unwrap_or(0) < 100_000 {
+            return Err("download failed".to_string());
+        }
+        std::process::Command::new(&out).spawn().map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -543,7 +722,7 @@ fn copy_path(path: String) {
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            get_root, scan, shapes, pick_folder, read_file, drag_start, win_close, win_min, win_pin, win_drag, reveal, copy_path
+            get_root, scan, shapes, sounds, app_version, install_update, pick_folder, read_file, drag_start, win_close, win_min, win_pin, win_drag, reveal, copy_path
         ])
         .setup(|app| {
             let win = app.get_webview_window("main").unwrap();

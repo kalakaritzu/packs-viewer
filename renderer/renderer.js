@@ -9,6 +9,8 @@ const f = { terms: [], pack: null, types: new Set(), kind: 'all', key: '', bmin:
 let bpmBounds = [60, 200];
 f.fuzzy = [];
 f.shape = null;
+f.sim = null;                         // { path, name, bands, shape, dur } while ranking by "similar to this sample"
+let multi = new Set(), anchor = -1;  // multi-selection (ctrl/shift click) for dragging several samples at once
 let sort = { col: 'pack', dir: 1 };
 const SORTS = [['name', 'Name'], ['pack', 'Pack'], ['type', 'Type'], ['bpm', 'BPM'], ['key', 'Key'], ['dur', 'Length']];
 let favs = new Set();
@@ -86,13 +88,13 @@ const activeCount = () => f.types.size + (f.kind !== 'all') + (f.bmin != null ||
 function refresh(keepScroll) {
   f.fuzzy = f.terms.map((t) => !ALL.some((i) => i.hay.includes(t)));
   VIEW = ALL.filter((it) => matches(it));
-  if (f.shape) rankByShape(); else VIEW.sort(compare);
+  if (f.shape) rankByShape(); else if (f.sim) rankBySimilar(); else VIEW.sort(compare);
   renderSide(); renderTags();
   $('#empty').hidden = VIEW.length > 0;
   $('#rows').style.height = VIEW.length * ROW + 'px';
   if (!keepScroll) $('#list').scrollTop = 0;
   renderRows();
-  $('#count').textContent = `${VIEW.length.toLocaleString()} ${f.shape ? 'closest ' : ''}sample${VIEW.length === 1 ? '' : 's'}`;
+  $('#count').textContent = `${VIEW.length.toLocaleString()} ${f.shape || f.sim ? 'closest ' : ''}sample${VIEW.length === 1 ? '' : 's'}${selCount() > 1 ? ' · ' + selCount() + ' selected' : ''}`;
   $('#sortLabel').textContent = sort.col === 'match' ? 'Best match' : SORTS.find((s) => s[0] === sort.col)[1] + (sort.dir > 0 ? ' ↑' : ' ↓');
   $('#btnShape').classList.toggle('lit', !!f.shape);
   if (popFor === $('#btnShape')) drawSketch();
@@ -125,6 +127,7 @@ function renderTags() {
   if (f.bmin != null || f.bmax != null) add('bpm', `${f.bmin ?? bpmBounds[0]}–${f.bmax ?? bpmBounds[1]} BPM`);
   if (f.key) add('key', 'Key ' + f.key);
   if (f.shape) add('shape', 'Shape match');
+  if (f.sim) add('sim', 'Similar to ' + f.sim.name);
   $('#tags').innerHTML = t.join('');
 }
 $('#tags').addEventListener('click', (e) => {
@@ -136,6 +139,7 @@ $('#tags').addEventListener('click', (e) => {
   else if (id === 'bpm') { f.bmin = f.bmax = null; bpmSlider.set(bpmBounds); }
   else if (id === 'key') f.key = '';
   else if (id === 'shape') { clearSketch(); return; }
+  else if (id === 'sim') { clearSimilar(); return; }
   refresh();
 });
 
@@ -249,7 +253,7 @@ $('#btnFilters').onclick = () => {
 $('#btnSort').onclick = () => {
   if (!openPop($('#btnSort'), { width: 190 })) return;
   const draw = () => {
-    pop.innerHTML = (f.shape ? [['match', 'Best match'], ...SORTS] : SORTS).map(([c, l]) => `<button class="menu-item ${sort.col === c ? 'on' : ''}" data-sort="${c}">${l}<i>${sort.col === c && c !== 'match' ? (sort.dir > 0 ? '↑' : '↓') : ''}</i></button>`).join('');
+    pop.innerHTML = (f.shape || f.sim ? [['match', 'Best match'], ...SORTS] : SORTS).map(([c, l]) => `<button class="menu-item ${sort.col === c ? 'on' : ''}" data-sort="${c}">${l}<i>${sort.col === c && c !== 'match' ? (sort.dir > 0 ? '↑' : '↓') : ''}</i></button>`).join('');
   };
   draw();
   pop.onclick = (e) => {
@@ -344,11 +348,59 @@ function rankByShape() {
   scored.length = Math.min(scored.length, 300);
   VIEW = sort.col === 'match' ? scored.map((x) => x[1]) : scored.map((x) => x[1]).sort(compare);
 }
+// ----- find similar: rank by average spectrum (timbre) + volume outline + length against the selected sample
+const SOUNDS = new Map();               // path -> Float32Array(16), log-spaced band levels per WAV
+let soundsReady = false;
+function simDist(it, bands, shape, r) {
+  let b = 0;
+  for (let i = 0; i < bands.length; i++) b += Math.abs(bands[i] - r.bands[i]);
+  b /= bands.length;
+  const d = it.dur && r.dur ? Math.min(1, Math.abs(Math.log(it.dur / r.dur)) / Math.log(8)) : 0.5;
+  return 0.5 * b + 0.35 * shapeDist(shape, r.shape) + 0.15 * d;
+}
+function rankBySimilar() {
+  const r = f.sim, scored = [];
+  for (const it of VIEW) {
+    const b = SOUNDS.get(it.path), s = SHAPES.get(it.path);
+    if (b && s) scored.push([simDist(it, b, s, r), it]);
+  }
+  scored.sort((a, b) => a[0] - b[0]);
+  scored.length = Math.min(scored.length, 300);
+  VIEW = sort.col === 'match' ? scored.map((x) => x[1]) : scored.map((x) => x[1]).sort(compare);
+}
+function startSimilar(it) {
+  if (!it) { toast('Select a sample first'); return; }
+  if (!soundsReady) { toast('Still analysing sounds…'); return; }
+  const bands = SOUNDS.get(it.path), shape = SHAPES.get(it.path);
+  if (!bands || !shape) { toast('Only WAV samples can be matched'); return; }
+  const first = !f.shape && !f.sim;
+  if (f.shape) { f.shape = null; sk.fill(-1); drawSketch(); }
+  if (first) prevSort = sort;
+  f.sim = { path: it.path, name: it.name, bands, shape: Float32Array.from(shape, Math.sqrt), dur: it.dur };
+  sort = { col: 'match', dir: 1 };
+  refresh();
+}
+function clearSimilar() {
+  f.sim = null;
+  if (prevSort) { sort = prevSort; prevSort = null; } else if (sort.col === 'match') sort = pref('sort', { col: 'pack', dir: 1 });
+  refresh();
+}
+async function loadSounds() {
+  if (!api.sounds) return;
+  soundsReady = false; SOUNDS.clear();
+  try {
+    const m = await api.sounds();
+    for (const [p, v] of Object.entries(m)) SOUNDS.set(p, Float32Array.from(v, (x) => x / 255));
+    soundsReady = true;
+  } catch {}
+  if (f.sim) refresh(true);
+}
 function applySketch() {
   const set = [...sk].filter((v) => v >= 0);
   if (set.length < 3) { if (f.shape) clearSketch(true); return; }
   const top = Math.max(...set, 0.02);
-  const first = !f.shape;
+  const first = !f.shape && !f.sim;
+  f.sim = null;
   f.shape = Float32Array.from(sk, (v) => (v < 0 ? -1 : Math.min(1, v / top)));
   if (first) { prevSort = sort; sort = { col: 'match', dir: 1 }; }
   refresh();
@@ -409,9 +461,11 @@ async function loadShapes() {
   } catch {}
   shapeProg = null; skStatus();
   if (f.shape) refresh(true);
+  loadSounds();
 }
 if (api.shapes) {
   $('#btnShape').hidden = false;
+  if (api.sounds) $('#btnSimilar').hidden = false;
   api.onShapeProgress((p) => { shapeProg = p; if (popFor === $('#btnShape')) skStatus(); });
 }
 
@@ -445,7 +499,7 @@ function renderRows() {
   for (let i = start; i < end; i++) {
     const it = VIEW[i];
     const fav = favs.has(it.path);
-    html += `<div class="trow ${it.path === selPath ? 'sel' : ''}" data-i="${i}" draggable="true" style="top:${i * ROW}px">
+    html += `<div class="trow ${it.path === selPath ? 'sel' : ''} ${multi.has(it.path) ? 'msel' : ''}" data-i="${i}" draggable="true" style="top:${i * ROW}px">
       <div class="star ${fav ? 'on' : ''}" data-star><svg viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2 6.3 20.3l1.2-6.4L2.8 9.5l6.4-.8z" stroke-linejoin="round"/></svg></div>
       <div title="${esc(it.rel)}"><div class="nm">${esc(it.name)}${it.loop ? '<span class="lp">LOOP</span>' : ''}</div><div class="sub">${esc(prettyPack(it.pack))} · ${esc(it.type)}</div></div>
       <div class="c-bpm">${it.bpm ? it.bpm + ' bpm' : ''}</div>
@@ -491,6 +545,11 @@ function ensureVisible(i) {
   if (y < list.scrollTop) list.scrollTop = y;
   else if (y + ROW > list.scrollTop + list.clientHeight) list.scrollTop = y + ROW - list.clientHeight;
 }
+const selCount = () => { let n = 0; for (const v of VIEW) if (multi.has(v.path)) n++; return n; };
+const updateCount = () => {
+  const n = selCount();
+  $('#count').textContent = `${VIEW.length.toLocaleString()} ${f.shape || f.sim ? 'closest ' : ''}sample${VIEW.length === 1 ? '' : 's'}${n > 1 ? ' · ' + n + ' selected' : ''}`;
+};
 const rowIndexOf = (path) => VIEW.findIndex((v) => v.path === path);
 
 // ---------- audio engine ----------
@@ -651,7 +710,20 @@ $('#rows').addEventListener('click', (e) => {
     saveFavs(); if (f.fav) refresh(true); else { renderRows(); renderSide(); }
     return;
   }
-  select(+row.dataset.i);
+  const i = +row.dataset.i;
+  if (e.shiftKey) {
+    const a = anchor >= 0 && anchor < VIEW.length ? anchor : Math.max(0, rowIndexOf(selPath));
+    multi = new Set(VIEW.slice(Math.min(a, i), Math.max(a, i) + 1).map((v) => v.path));
+    renderRows(); updateCount(); return;
+  }
+  if (e.ctrlKey || e.metaKey) {
+    if (!multi.size && selPath) multi.add(selPath);
+    multi.has(it.path) ? multi.delete(it.path) : multi.add(it.path);
+    anchor = i; renderRows(); updateCount(); return;
+  }
+  if (multi.size) { multi.clear(); updateCount(); }
+  anchor = i;
+  select(i);
 });
 $('#rows').addEventListener('dblclick', (e) => {
   const row = e.target.closest('.trow'); if (!row || e.target.closest('[data-star]')) return;
@@ -663,7 +735,10 @@ $('#rows').addEventListener('contextmenu', (e) => {
 });
 $('#rows').addEventListener('dragstart', (e) => {
   const row = e.target.closest('.trow'); if (!row) return;
-  e.preventDefault(); api.dragStart(VIEW[+row.dataset.i].path);
+  e.preventDefault();
+  const it = VIEW[+row.dataset.i];
+  const group = multi.size > 1 && multi.has(it.path) ? VIEW.filter((v) => multi.has(v.path)).map((v) => v.path) : [it.path];
+  api.dragStart(group);
 });
 
 $('#packs').addEventListener('click', (e) => {
@@ -697,12 +772,14 @@ $('#btnPin').onclick = () => { pinOn = !pinOn; setPref('pin', pinOn); applyPin()
 applyPin();
 $('#btnClose').onclick = () => api.closeWin();
 $('#btnMin').onclick = () => api.minWin();
+$('#btnSimilar').onclick = () => startSimilar(cur);
 $('#btnReveal').onclick = () => { if (cur) api.reveal(cur.path); };
 
 document.addEventListener('keydown', (e) => {
   const inField = e.target.matches('#q');
   if (e.key === 'Escape') {
     if (popFor) closePop();
+    else if (multi.size) { multi.clear(); renderRows(); updateCount(); }
     else if (inField && $('#q').value) $('#qClear').click();
     else document.activeElement.blur();
   }
@@ -713,6 +790,8 @@ document.addEventListener('keydown', (e) => {
   else if ((e.key === '/' && !inField) || (e.ctrlKey && e.key.toLowerCase() === 'f')) { e.preventDefault(); $('#q').focus(); $('#q').select(); }
   else if (e.key === 'Enter' && inField) { $('#q').blur(); if (selPath == null && VIEW.length) select(0); }
   else if (e.key === ' ' && !inField) { e.preventDefault(); toggle(); }
+  else if (e.ctrlKey && e.key.toLowerCase() === 'a' && !inField) { e.preventDefault(); multi = new Set(VIEW.map((v) => v.path)); renderRows(); updateCount(); }
+  else if (e.key.toLowerCase() === 's' && !inField && !e.ctrlKey && cur) startSimilar(cur);
   else if (e.key.toLowerCase() === 'f' && !inField && !e.ctrlKey && cur) {
     favs.has(cur.path) ? favs.delete(cur.path) : favs.add(cur.path);
     saveFavs(); renderRows(); renderSide();
@@ -771,4 +850,27 @@ load(false);
   new MutationObserver(fade).observe($('#rows'), { childList: true, attributes: true });
   new ResizeObserver(fade).observe(list);
   fade();
+})();
+
+// ---------- update check ----------
+(async () => {
+  if (!api.appVersion || !api.installUpdate) return;
+  try {
+    const cur = (await api.appVersion()).split('.').map(Number);
+    const r = await fetch('https://api.github.com/repos/kalakaritzu/packs-viewer/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+    if (!r.ok) return;
+    const rel = await r.json();
+    const v = String(rel.tag_name || '').replace(/^v/, '').split('.').map(Number);
+    const gt = (a, b) => { for (let i = 0; i < 3; i++) { const x = a[i] || 0, y = b[i] || 0; if (x !== y) return x > y; } return false; };
+    const newer = gt(v, cur);
+    const asset = (rel.assets || []).find((a) => /setup.*\.exe$/i.test(a.name));
+    if (!newer || !asset) return;
+    const b = $('#btnUpdate');
+    b.textContent = 'Update to v' + v.join('.'); b.title = 'Download and install the new version (the app restarts)'; b.hidden = false;
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = 'Downloading…';
+      try { await api.installUpdate(asset.browser_download_url); b.textContent = 'Installing…'; }
+      catch { b.disabled = false; b.textContent = 'Update failed, retry'; }
+    };
+  } catch {}
 })();

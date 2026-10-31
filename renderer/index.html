@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com;">
 <title>Packs Viewer</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -13,6 +13,7 @@
     <button class="tab" id="navAll">All samples<em id="cntAll"></em></button>
     <button class="tab" id="navFav">Favorites<em id="cntFav"></em></button>
     <div class="grow"></div>
+    <button class="btn upd" id="btnUpdate" hidden></button>
     <button class="icon-btn" id="btnPin" title="Keep on top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6z"/><path d="M12 13v7"/></svg></button>
     <button class="icon-btn" id="btnMenu" title="Library options"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
     <button class="icon-btn" id="btnMin" title="Minimize"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="2" rx="1"/></svg></button>
@@ -47,6 +48,7 @@
       <button class="icon-btn tgl" id="optLoop" title="Loop"><svg viewBox="0 0 24 24"><path d="M17 2l4 4-4 4M3 11V9a3 3 0 013-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 01-3 3H3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <button class="icon-btn tgl on" id="optAuto" title="Auto-play on select"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
       <button class="icon-btn" id="btnVol" title="Volume"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 010 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+      <button class="icon-btn" id="btnSimilar" title="Find similar sounds (S)" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="5.5"/><circle cx="15" cy="12" r="5.5"/></svg></button>
       <button class="icon-btn" id="btnReveal" title="Show in Explorer"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 012-2h4l2 2h8a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
     </footer>
   </main>

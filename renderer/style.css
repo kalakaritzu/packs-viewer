@@ -71,6 +71,9 @@ input { font: inherit; color: inherit; }
 .trow:hover { background: var(--panel); }
 .trow.sel { background: var(--panel2); }
 .trow.sel .nm { color: var(--accent); }
+.trow.msel { background: var(--accent-soft); }
+.btn.upd { height: 30px; padding: 0 12px; margin-right: 6px; background: var(--accent); color: #fff; }
+.btn.upd[hidden] { display: none; }
 .trow > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trow > div:nth-child(2) { text-overflow: clip; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
 .trow > div:nth-child(2) > div { overflow: visible; }
