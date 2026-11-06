@@ -519,7 +519,7 @@ function marquee(row) {
   const dur = Math.max(...items.map(([, d]) => d)) * 28 + 2400;
   cell.classList.add('scrolling');
   cell._anims = items.map(([el, d]) => el.animate(
-    [{ transform: 'translateX(0)' }, { transform: 'translateX(0)', offset: 0.15 }, { transform: `translateX(${-d - 4}px)`, offset: 0.65 }, { transform: `translateX(${-d - 4}px)`, offset: 0.85 }, { transform: 'translateX(0)' }],
+    [{ transform: 'translateX(0)' }, { transform: 'translateX(0)', offset: 0.15 }, { transform: `translateX(${-d - 36}px)`, offset: 0.65 }, { transform: `translateX(${-d - 36}px)`, offset: 0.85 }, { transform: 'translateX(0)' }],
     { duration: dur, iterations: Infinity, easing: 'ease-in-out' }));
 }
 function unmarquee(row) {
@@ -716,7 +716,7 @@ $('#rows').addEventListener('contextmenu', (e) => {
 });
 $('#rows').addEventListener('dragstart', (e) => {
   const row = e.target.closest('.trow'); if (!row) return;
-  e.preventDefault(); api.dragStart([VIEW[+row.dataset.i].path]);
+  e.preventDefault(); api.dragStart([VIEW[+row.dataset.i].path]).catch((err) => toast(String(err).includes('long') ? 'Path too long to drag this sample' : 'Could not drag this sample'));
 });
 
 $('#packs').addEventListener('click', (e) => {

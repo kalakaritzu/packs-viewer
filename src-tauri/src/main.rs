@@ -640,11 +640,82 @@ async fn read_file(path: String) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(buf))
 }
 
+extern "system" {
+    fn GetShortPathNameW(long: *const u16, short: *mut u16, len: u32) -> u32;
+}
+
+// The shell cannot build drag data for paths over MAX_PATH and the drag crate panics (aborting the app) when it fails,
+// so hand it the 8.3 short form of long paths and refuse anything it still cannot take.
+fn drag_safe(path: &str) -> Result<PathBuf, String> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    let p = PathBuf::from(path);
+    if !p.is_file() {
+        return Err("file not found".into());
+    }
+    if path.encode_utf16().count() < 250 {
+        return Ok(p);
+    }
+    let wide: Vec<u16> = p.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let mut buf = vec![0u16; 1024];
+    let n = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) } as usize;
+    if n > 0 && n < 250 {
+        return Ok(PathBuf::from(std::ffi::OsString::from_wide(&buf[..n])));
+    }
+    short_link(&p)
+}
+
+// No short form available: expose the file under a short path with a hard link (no extra disk space; falls back to a copy
+// across drives). The link stays put so projects that reference it keep working.
+fn short_link(p: &Path) -> Result<PathBuf, String> {
+    use std::hash::{Hash, Hasher};
+    let base = std::env::var("LOCALAPPDATA").map_err(|_| "path too long to drag".to_string())?;
+    let dir = PathBuf::from(base).join("Packs Viewer").join("long-paths");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    p.hash(&mut h);
+    let stem: String = p.file_stem().map(|s| s.to_string_lossy().chars().take(90).collect()).unwrap_or_default();
+    let ext = p.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+    let link = dir.join(format!("{}-{:08x}.{}", stem, h.finish() as u32, ext));
+    let size = fs::metadata(p).map_err(|e| e.to_string())?.len();
+    if fs::metadata(&link).map(|m| m.len() == size).unwrap_or(false) {
+        return Ok(link);
+    }
+    let _ = fs::remove_file(&link);
+    if fs::hard_link(p, &link).is_err() {
+        fs::copy(p, &link).map_err(|e| e.to_string())?;
+    }
+    if link.as_os_str().len() >= 250 {
+        return Err("path too long to drag".into());
+    }
+    Ok(link)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn long_paths_are_draggable() {
+        let root = std::path::Path::new(r"C:\Users\Alexander\Music\FL Studio\Packs");
+        let mut n = 0;
+        for e in walkdir::WalkDir::new(root).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()) {
+            let s = e.path().to_string_lossy().to_string();
+            if s.encode_utf16().count() < 250 {
+                continue;
+            }
+            let r = super::drag_safe(&s).unwrap_or_else(|er| panic!("{s}: {er}"));
+            assert!(r.is_file() && r.as_os_str().len() < 250, "{}", r.display());
+            n += 1;
+        }
+        println!("checked {n} long files");
+        assert!(n > 0);
+    }
+}
+
 #[tauri::command]
 fn drag_start(window: WebviewWindow, paths: Vec<String>) -> Result<(), String> {
+    let files = paths.iter().map(|p| drag_safe(p)).collect::<Result<Vec<_>, _>>()?;
     drag::start_drag(
         &window,
-        drag::DragItem::Files(paths.into_iter().map(PathBuf::from).collect()),
+        drag::DragItem::Files(files),
         drag::Image::Raw(DRAG_ICON.to_vec()),
         |_result, _pos| {},
         drag::Options::default(),
@@ -720,6 +791,16 @@ fn copy_path(path: String) {
 }
 
 fn main() {
+    // Release builds abort on panic; leave a note behind so a crash can be diagnosed.
+    std::panic::set_hook(Box::new(|info| {
+        if let Ok(dir) = std::env::var("APPDATA") {
+            let d = PathBuf::from(dir).join("local.packsviewer");
+            let _ = fs::create_dir_all(&d);
+            let _ = fs::write(d.join("crash.log"), format!("{}
+{:?}
+", info, std::backtrace::Backtrace::force_capture()));
+        }
+    }));
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_root, scan, shapes, sounds, app_version, install_update, pick_folder, read_file, drag_start, win_close, win_min, win_pin, win_drag, reveal, copy_path

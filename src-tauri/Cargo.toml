@@ -1,6 +1,6 @@
 [package]
 name = "packs-viewer"
-version = "1.1.1"
+version = "1.1.2"
 description = "Fast, clean browser for your FL Studio sample packs"
 edition = "2021"
 
